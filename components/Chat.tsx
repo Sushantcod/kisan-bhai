@@ -33,6 +33,7 @@ import { useLocation } from 'react-router-dom';
 import { geminiService } from '../services/geminiService';
 import { getAIConfig, AIConfig } from '../services/aiConfig';
 import { ApiKeyModal } from './ApiKeyModal';
+import { FormattedMessage } from './FormattedMessage';
 import { getTranslation } from '../translations';
 import { useUser } from '../App';
 import { ChatMessage, FarmProfile } from '../types';
@@ -375,7 +376,7 @@ export const Chat: React.FC = () => {
                     className="max-w-xs rounded-xl mb-3 border border-slate-200 shadow-sm object-cover" 
                   />
                 )}
-                <p className="whitespace-pre-wrap leading-relaxed text-xs sm:text-sm font-medium">{msg.content}</p>
+                <FormattedMessage content={msg.content} isUser={msg.role === 'user'} />
                 
                 {msg.role === 'assistant' && (
                   <div className="mt-3 pt-2.5 border-t border-white/40 flex items-center gap-3">
