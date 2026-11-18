@@ -21,11 +21,18 @@ import {
   Wheat, 
   X,
   MessageCircle,
-  Volume1
+  Volume1,
+  Key,
+  Cpu,
+  ShieldCheck,
+  Zap,
+  Server
 } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { geminiService } from '../services/geminiService';
+import { getAIConfig, AIConfig } from '../services/aiConfig';
+import { ApiKeyModal } from './ApiKeyModal';
 import { getTranslation } from '../translations';
 import { useUser } from '../App';
 import { ChatMessage, FarmProfile } from '../types';
@@ -77,6 +84,8 @@ export const Chat: React.FC = () => {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [isLiveMode, setIsLiveMode] = useState(false);
+  const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
+  const [aiConfig, setAiConfig] = useState<AIConfig>(() => getAIConfig());
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -311,14 +320,29 @@ export const Chat: React.FC = () => {
           </div>
         </div>
 
-        <button 
-          onClick={startLiveChat} 
-          className="flex items-center gap-2 bg-gradient-to-r from-brand-600 to-emerald-600 hover:from-brand-500 hover:to-emerald-500 text-white px-4 py-2.5 rounded-xl font-extrabold text-xs transition-all shadow-md shadow-brand-600/20 active:scale-95"
-        >
-          <Waves className="w-4 h-4" /> 
-          <span className="hidden sm:inline">Start Live Voice</span>
-          <span className="sm:hidden">Live Voice</span>
-        </button>
+        <div className="flex items-center gap-2">
+          {/* AI Settings & Free Key Button */}
+          <button
+            onClick={() => setIsApiKeyModalOpen(true)}
+            className="flex items-center gap-1.5 bg-white/70 hover:bg-white text-slate-800 px-3 py-2 rounded-xl text-xs font-extrabold border border-white/80 shadow-xs hover:shadow transition-all active:scale-95"
+            title="Configure AI API Key & Free Guide"
+          >
+            <Key className="w-3.5 h-3.5 text-amber-500" />
+            <span className="hidden sm:inline">AI Engine</span>
+            <span className="text-[10px] uppercase font-black px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+              {aiConfig.provider === 'gemini' ? 'Gemini' : aiConfig.provider === 'groq' ? 'Groq' : 'Offline'}
+            </span>
+          </button>
+
+          <button 
+            onClick={startLiveChat} 
+            className="flex items-center gap-2 bg-gradient-to-r from-brand-600 to-emerald-600 hover:from-brand-500 hover:to-emerald-500 text-white px-4 py-2.5 rounded-xl font-extrabold text-xs transition-all shadow-md shadow-brand-600/20 active:scale-95"
+          >
+            <Waves className="w-4 h-4" /> 
+            <span className="hidden sm:inline">Start Live Voice</span>
+            <span className="sm:hidden">Live Voice</span>
+          </button>
+        </div>
       </div>
 
       {/* MESSAGES TRAJECTORY (SEMI-TRANSPARENT MIDDLE AREA) */}
@@ -471,6 +495,15 @@ export const Chat: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* AI ENGINE & FREE API KEY MODAL */}
+      <ApiKeyModal
+        isOpen={isApiKeyModalOpen}
+        onClose={() => {
+          setIsApiKeyModalOpen(false);
+          setAiConfig(getAIConfig());
+        }}
+      />
     </div>
   );
 };

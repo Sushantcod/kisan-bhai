@@ -21,11 +21,13 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   ShoppingBag,
-  Store
+  Store,
+  Key
 } from 'lucide-react';
 import { getTranslation, Language } from '../translations';
 import { useUser } from '../App';
 import { LanguageToggle } from './LanguageToggle';
+import { ApiKeyModal } from './ApiKeyModal';
 
 interface LayoutProps {
   onLogout: () => void;
@@ -35,6 +37,7 @@ export const Layout: React.FC<LayoutProps> = ({ onLogout }) => {
   const location = useLocation();
   const { user, updateUser } = useUser();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
     return localStorage.getItem('kisan_sidebar_collapsed') === 'true';
   });
@@ -402,6 +405,17 @@ export const Layout: React.FC<LayoutProps> = ({ onLogout }) => {
             {/* Multi-lingual Selector */}
             <LanguageToggle currentLang={lang} onLanguageChange={handleLanguageChange} />
 
+            {/* AI Engine & Free API Key Trigger */}
+            <button
+              type="button"
+              onClick={() => setIsApiKeyModalOpen(true)}
+              className="hidden md:flex items-center gap-1.5 px-3 py-2 bg-white/70 hover:bg-white text-slate-800 rounded-xl text-xs font-extrabold border border-white/80 shadow-xs hover:shadow transition-all active:scale-95"
+              title="AI Engine & Free Key Settings"
+            >
+              <Key className="w-3.5 h-3.5 text-amber-500" />
+              <span>AI Engine</span>
+            </button>
+
             {/* Mobile Menu Button */}
             <button
               type="button"
@@ -509,6 +523,11 @@ export const Layout: React.FC<LayoutProps> = ({ onLogout }) => {
           </aside>
         </div>
       )}
+      {/* GLOBAL AI ENGINE & FREE API KEY MODAL */}
+      <ApiKeyModal
+        isOpen={isApiKeyModalOpen}
+        onClose={() => setIsApiKeyModalOpen(false)}
+      />
     </div>
   );
 };
