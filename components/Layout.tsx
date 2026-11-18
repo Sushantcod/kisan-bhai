@@ -22,7 +22,8 @@ import {
   PanelLeftOpen,
   ShoppingBag,
   Store,
-  Key
+  Key,
+  Zap
 } from 'lucide-react';
 import { getTranslation, Language } from '../translations';
 import { useUser } from '../App';
@@ -405,15 +406,15 @@ export const Layout: React.FC<LayoutProps> = ({ onLogout }) => {
             {/* Multi-lingual Selector */}
             <LanguageToggle currentLang={lang} onLanguageChange={handleLanguageChange} />
 
-            {/* AI Engine & Free API Key Trigger */}
+            {/* Groq AI Key & Settings Trigger */}
             <button
               type="button"
               onClick={() => setIsApiKeyModalOpen(true)}
               className="hidden md:flex items-center gap-1.5 px-3 py-2 bg-white/70 hover:bg-white text-slate-800 rounded-xl text-xs font-extrabold border border-white/80 shadow-xs hover:shadow transition-all active:scale-95"
-              title="AI Engine & Free Key Settings"
+              title="Groq AI Settings & Auto-Offline Mode"
             >
-              <Key className="w-3.5 h-3.5 text-amber-500" />
-              <span>AI Engine</span>
+              <Zap className="w-3.5 h-3.5 text-amber-500 fill-current" />
+              <span>Groq AI</span>
             </button>
 
             {/* Mobile Menu Button */}

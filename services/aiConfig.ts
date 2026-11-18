@@ -1,19 +1,13 @@
-// Configuration service for AI Providers and Bring-Your-Own-Key (BYOK)
-
-export type AIProvider = 'gemini' | 'groq' | 'expert_system';
+// Configuration service for Groq Cloud API and Local Research Model
 
 export interface AIConfig {
-  provider: AIProvider;
-  geminiKey: string;
   groqKey: string;
-  modelApiUrl: string; // URL for local/hosted plant-disease-research model (e.g. http://localhost:8000)
+  modelApiUrl: string; // e.g. http://localhost:8000 for plant-disease-research model
 }
 
-const STORAGE_KEY = 'kisan_ai_config_v1';
+const STORAGE_KEY = 'kisan_ai_config_v2';
 
 const DEFAULT_CONFIG: AIConfig = {
-  provider: 'gemini',
-  geminiKey: '',
   groqKey: '',
   modelApiUrl: 'http://localhost:8000',
 };
@@ -23,6 +17,14 @@ export const getAIConfig = (): AIConfig => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
       return { ...DEFAULT_CONFIG, ...JSON.parse(saved) };
+    }
+    // Also check if v1 had a groq key saved
+    const v1 = localStorage.getItem('kisan_ai_config_v1');
+    if (v1) {
+      const parsed = JSON.parse(v1);
+      if (parsed.groqKey) {
+        return { ...DEFAULT_CONFIG, groqKey: parsed.groqKey };
+      }
     }
   } catch (e) {
     console.error('Failed to parse AI config from localStorage:', e);
@@ -37,13 +39,6 @@ export const saveAIConfig = (config: Partial<AIConfig>): AIConfig => {
   return updated;
 };
 
-export const getActiveApiKey = (config?: AIConfig): string => {
-  const cfg = config || getAIConfig();
-  if (cfg.provider === 'gemini') {
-    return cfg.geminiKey.trim() || (process.env.API_KEY || '');
-  }
-  if (cfg.provider === 'groq') {
-    return cfg.groqKey.trim();
-  }
-  return '';
+export const hasGroqKey = (): boolean => {
+  return !!getAIConfig().groqKey.trim();
 };

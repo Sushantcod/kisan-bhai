@@ -321,16 +321,20 @@ export const Chat: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* AI Settings & Free Key Button */}
+          {/* Groq AI Settings & Auto-Offline Button */}
           <button
             onClick={() => setIsApiKeyModalOpen(true)}
             className="flex items-center gap-1.5 bg-white/70 hover:bg-white text-slate-800 px-3 py-2 rounded-xl text-xs font-extrabold border border-white/80 shadow-xs hover:shadow transition-all active:scale-95"
-            title="Configure AI API Key & Free Guide"
+            title="Configure Groq API Key & Settings"
           >
-            <Key className="w-3.5 h-3.5 text-amber-500" />
-            <span className="hidden sm:inline">AI Engine</span>
-            <span className="text-[10px] uppercase font-black px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
-              {aiConfig.provider === 'gemini' ? 'Gemini' : aiConfig.provider === 'groq' ? 'Groq' : 'Offline'}
+            <Zap className="w-3.5 h-3.5 text-amber-500 fill-current" />
+            <span className="hidden sm:inline">Groq AI</span>
+            <span className={`text-[10px] uppercase font-black px-1.5 py-0.5 rounded-full ${
+              aiConfig.groqKey.trim() 
+                ? 'bg-amber-100 text-amber-900 border border-amber-200' 
+                : 'bg-emerald-100 text-emerald-900 border border-emerald-200'
+            }`}>
+              {aiConfig.groqKey.trim() ? 'Active' : 'Offline Auto'}
             </span>
           </button>
 
