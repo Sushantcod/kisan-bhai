@@ -1,6 +1,6 @@
 import { ChatMessage, FarmProfile, FertilizerAdvice } from "../types";
 import { getAIConfig } from "./aiConfig";
-import { queryExpertSystem, PLANT_DISEASE_KNOWLEDGE } from "./expertSystem";
+import { queryExpertSystem, PLANT_DISEASE_KNOWLEDGE, formatFarmerFriendlyDiagnosis } from "./expertSystem";
 
 const CACHE_PREFIX = 'ruralassist_cache_v2_';
 const WEATHER_CACHE_TIME = 15 * 60 * 1000; // 15 mins
@@ -93,7 +93,13 @@ export class GeminiService {
       {
         role: "system",
         content: `You are Kisan-Bhai, the friendly expert AI Farmer advisor for rural farmers in India. ${this.getLanguageContext(lang)} 
-Provide actionable agronomic solutions, pest and disease remedies, fertilizer dosages, and seasonal planting advice.`
+Always explain crop diseases and solutions in simple, practical, everyday language that any Indian farmer (kisan) can immediately understand:
+1. What disease/condition it is (using simple regional names like Jhulsa / Rust / Blight).
+2. Simple field signs (what to look for on leaves).
+3. Simple organic home remedy (neem oil, buttermilk, removing infected leaves).
+4. Chemical medicine spray with exact dosage in easy measurements (e.g. 2 grams per 1L water or 30 grams per 15L spray tank).
+5. What mistakes to avoid (e.g. no watering on leaves, spray in late afternoon).
+Keep the tone warm, clear, and encouraging.`
       },
       ...history.map(m => ({
         role: m.role === 'assistant' ? 'assistant' : 'user',
@@ -184,30 +190,23 @@ Provide actionable agronomic solutions, pest and disease remedies, fertilizer do
     if (imageBase64) {
       const localResult = await this.queryLocalModel(imageBase64);
       if (localResult && localResult.disease) {
-        const rawClass = localResult.raw_class;
-        const expertInfo = PLANT_DISEASE_KNOWLEDGE[rawClass];
-
-        localModelDiagnosis = `🌿 **Custom Research Model Diagnosis (MobileNetV2):**\n` +
-          `• **Crop:** ${localResult.crop}\n` +
-          `• **Detected Condition:** ${localResult.disease}\n` +
-          `• **Model Confidence:** ${localResult.confidence}%\n\n`;
-
-        if (expertInfo) {
-          localModelDiagnosis += `🔍 **Symptoms:** ${expertInfo.symptoms}\n\n` +
-            `🌱 **Recommended Organic Remedy:**\n${expertInfo.organicSteps}\n\n` +
-            `🧪 **Chemical Treatment & Dosage:**\n${expertInfo.chemicalSteps}\n\n` +
-            `🛡️ **Prevention:** ${expertInfo.prevention}\n\n` +
-            `📞 *Kisan Call Center Helpline: 1800-180-1551 (Toll-Free)*`;
-        }
+        localModelDiagnosis = formatFarmerFriendlyDiagnosis(
+          localResult.raw_class,
+          localResult.crop,
+          localResult.disease,
+          localResult.confidence,
+          lang
+        );
       } else {
         // Fallback: If local model server is unreachable, use intelligent plant health diagnosis from our expert knowledge
         const fallback = await this.analyzeDisease(imageBase64, lang);
-        localModelDiagnosis = `🌿 **Crop Health Diagnosis (Kisan-Bhai Expert System):**\n` +
-          `• **Detected Condition:** ${fallback.diseaseName}\n` +
-          `• **Severity:** ${fallback.severity}\n\n` +
-          `🌱 **Recommended Organic Remedy:**\n${fallback.organicSteps}\n\n` +
-          `🧪 **Chemical Treatment & Dosage:**\n${fallback.chemicalSteps}\n\n` +
-          `📞 *Kisan Call Center Helpline: 1800-180-1551 (Toll-Free)*`;
+        localModelDiagnosis = `🌾 **किसान भाई, फसल जांच रिपोर्ट / Kisan Health Report**\n` +
+          `• **पहचानी गई स्थिति / Condition:** **${fallback.diseaseName}**\n` +
+          `• **खतरे का स्तर / Severity:** ${fallback.severity}\n\n` +
+          `🌱 **देसी और जैविक उपाय (Organic Home Remedy):**\n${fallback.organicSteps}\n\n` +
+          `💊 **दवा और सही मात्रा (Chemical Spray Dosage):**\n${fallback.chemicalSteps}\n\n` +
+          `⚠️ **खास सावधानी:** पत्तियों के ऊपर पानी न डालें; हमेशा जड़ों में पानी दें और शाम के समय छिड़कें।\n\n` +
+          `📞 *मुफ्त सरकारी कृषि हेल्पलाइन: 1800-180-1551 (टोल-फ्री)*`;
       }
     }
 

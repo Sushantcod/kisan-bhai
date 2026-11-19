@@ -362,6 +362,204 @@ export interface ExpertSystemResult {
   content: string;
 }
 
+// Format diagnosis into simple, easy-to-understand advice for everyday farmers
+export const formatFarmerFriendlyDiagnosis = (
+  rawClass: string,
+  crop: string,
+  disease: string,
+  confidence: number,
+  lang: string = 'en'
+): string => {
+  const expert = PLANT_DISEASE_KNOWLEDGE[rawClass];
+  const isHealthy = rawClass.toLowerCase().includes('healthy') || disease.toLowerCase().includes('healthy');
+
+  // Common colloquial Indian farming disease names
+  const commonNames: Record<string, { hi: string; pa: string; mr: string; en: string }> = {
+    'Tomato___Early_blight': {
+      hi: 'अगेती झुलसा (Early Blight / टार्गेट स्पॉट)',
+      pa: 'ਅਗੇਤੀ ਝੁਲਸਾ ਰੋਗ (Early Blight)',
+      mr: 'करपा रोग (Early Blight)',
+      en: 'Early Blight (Fungal Leaf Spot)'
+    },
+    'Tomato___Late_blight': {
+      hi: 'पिछेती झुलसा (Late Blight / महाझुलसा)',
+      pa: 'ਪਿਛੇਤਾ ਝੁਲਸਾ ਰੋਗ (Late Blight)',
+      mr: 'उशिरा येणारा करपा (Late Blight)',
+      en: 'Late Blight (Severe Foliar Blight)'
+    },
+    'Tomato___Bacterial_spot': {
+      hi: 'जीवाणु धब्बा रोग (Bacterial Spot)',
+      pa: 'ਜੀਵਾਣੂ ਧੱਬਾ ਰੋਗ (Bacterial Spot)',
+      mr: 'जिवाणू डाग रोग (Bacterial Spot)',
+      en: 'Bacterial Spot Disease'
+    },
+    'Tomato___Tomato_Yellow_Leaf_Curl_Virus': {
+      hi: 'पत्ती मुड़न / मरोड़िया रोग (Kukda / Leaf Curl Virus)',
+      pa: 'ਪੱਤਾ ਮਰੋੜ ਰੋਗ (Leaf Curl Virus)',
+      mr: 'पान आकसणे / चुरडा-मुरडा (Leaf Curl)',
+      en: 'Yellow Leaf Curl Virus (Kukda)'
+    },
+    'Potato___Early_blight': {
+      hi: 'आलू का अगेती झुलसा (Early Blight)',
+      pa: 'ਆਲੂ ਦਾ ਅਗੇਤੀ ਝੁਲਸਾ (Early Blight)',
+      mr: 'बटाट्यावरील करपा (Early Blight)',
+      en: 'Potato Early Blight'
+    },
+    'Potato___Late_blight': {
+      hi: 'आलू का पिछेती झुलसा (Late Blight / पाला मारना)',
+      pa: 'ਆਲੂ ਦਾ ਪਿਛੇਤਾ ਝੁਲਸਾ (Late Blight)',
+      mr: 'बटाट्यावरील उशिरा येणारा करपा',
+      en: 'Potato Late Blight'
+    },
+    'Apple___Apple_scab': {
+      hi: 'सेब का पपड़ी रोग (Apple Scab)',
+      pa: 'ਸੇਬ ਦਾ ਸਕੈਬ ਰੋਗ (Apple Scab)',
+      mr: 'सफरचंदावरील खरुज रोग (Scab)',
+      en: 'Apple Scab Disease'
+    },
+    'Corn_(maize)___Common_rust_': {
+      hi: 'मक्का का रतुआ / गेरुई रोग (Common Rust)',
+      pa: 'ਮੱਕੀ ਦਾ ਕੁੰਗੀ ਰੋਗ (Common Rust)',
+      mr: 'मक्यावरील तांबेरा रोग (Rust)',
+      en: 'Corn Common Rust'
+    },
+    'Corn_(maize)___Northern_Leaf_Blight': {
+      hi: 'मक्का का पत्ता झुलसा (Northern Leaf Blight)',
+      pa: 'ਮੱਕੀ ਦਾ ਪੱਤਾ ਝੁਲਸਾ (Leaf Blight)',
+      mr: 'मक्यावरील करपा (Leaf Blight)',
+      en: 'Corn Northern Leaf Blight'
+    },
+    'Wheat___Yellow_Rust': {
+      hi: 'गेहूं का पीला रतुआ (Yellow Rust / पीली कुंगी)',
+      pa: 'ਕਣਕ ਦੀ ਪੀਲੀ ਕੁੰਗੀ (Yellow Rust)',
+      mr: 'गव्हावरील पिवळा तांबेरा (Yellow Rust)',
+      en: 'Wheat Stripe / Yellow Rust'
+    },
+    'Rice___Blast': {
+      hi: 'धान का झुलसा / ब्लास्ट रोग (Rice Blast)',
+      pa: 'ਝੋਨੇ ਦਾ ਬਲਾਸਟ ਰੋਗ (Rice Blast)',
+      mr: 'भातावरील करपा / ब्लास्ट रोग',
+      en: 'Rice Blast Disease'
+    }
+  };
+
+  const localizedName = commonNames[rawClass]?.[lang as 'hi'|'pa'|'mr'|'en'] || disease;
+
+  if (isHealthy) {
+    if (lang === 'hi') {
+      return `🌾 **किसान भाई, फसल जांच रिपोर्ट: ${crop}**\n` +
+        `• **स्थिति:** **एकदम स्वस्थ फसल (100% तंदुरुस्त)**\n` +
+        `• **जांच सटीकता:** ${confidence}%\n\n` +
+        `✅ **फसल की स्थिति:**\n` +
+        `पौधे के पत्ते गहरे हरे और बिल्कुल साफ हैं। पत्तों पर कोई फफूंद, धब्बा या कीड़ा नहीं है।\n\n` +
+        `🌱 **फसल को ऐसा ही हरा-भरा रखने के उपाय:**\n` +
+        `1. **संतुलित खाद:** ज्यादा यूरिया न डालें। 15-20 दिनों में वर्मीकम्पोस्ट या हल्की जैविक खाद दें।\n` +
+        `2. **नमी बनाए रखें:** खेत में पानी जमा न होने दें, मिट्टी में हल्की नमी रखें।\n` +
+        `3. **सावधानी छिड़काव:** बचाव के लिए हर 15 दिन में 5 ml नीम का तेल प्रति लीटर पानी में मिलाकर छिड़क सकते हैं।\n\n` +
+        `📞 *मुफ्त सरकारी कृषि सलाह के लिए कॉल करें: 1800-180-1551 (टोल-फ्री)*`;
+    }
+    if (lang === 'pa') {
+      return `🌾 **ਕਿਸਾਨ ਵੀਰੋ, ਫ਼ਸਲ ਜਾਂਚ ਰਿਪੋਰਟ: ${crop}**\n` +
+        `• **ਹਾਲਤ:** **ਬਿਲਕੁਲ ਤੰਦਰੁਸਤ ਫ਼ਸਲ (Healthy Crop)**\n` +
+        `• **ਜਾਂਚ:** ${confidence}%\n\n` +
+        `✅ **ਫ਼ਸਲ ਦੀ ਹਾਲਤ:**\n` +
+        `ਪੱਤੇ ਬਿਲਕੁਲ ਸਾਫ਼ ਅਤੇ ਗੂੜ੍ਹੇ ਹਰੇ ਹਨ। ਕੋਈ ਉੱਲੀ ਜਾਂ ਕੀੜਾ ਨਹੀਂ ਹੈ।\n\n` +
+        `🌱 **ਫ਼ਸਲ ਨੂੰ ਤੰਦਰੁਸਤ ਰੱਖਣ ਦੇ ਤਰੀਕੇ:**\n` +
+        `1. **ਸੰਤੁਲਿਤ ਖਾਦ:** ਯੂਰੀਆ ਦੀ ਜ਼ਿਆਦਾ ਵਰਤੋਂ ਨਾ ਕਰੋ, ਰੂੜੀ ਜਾਂ ਵਰਮੀਕੰਪੋਸਟ ਪਾਓ।\n` +
+        `2. **ਪਾਣੀ ਦਾ ਪ੍ਰਬੰਧ:** ਖੇਤ ਵਿੱਚ ਪਾਣੀ ਖੜ੍ਹਾ ਨਾ ਹੋਣ ਦਿਓ।\n\n` +
+        `📞 *ਸਰਕਾਰੀ ਕਿਸਾਨ ਹੈਲਪਲਾਈਨ: 1800-180-1551 (ਟੋਲ-ਫ਼੍ਰੀ)*`;
+    }
+    if (lang === 'mr') {
+      return `🌾 **शेतकरी मित्र, पीक तपासणी अहवाल: ${crop}**\n` +
+        `• **स्थिती:** **पूर्णपणे निरोगी पीक (100% सुदृढ)**\n` +
+        `• **अचूकता:** ${confidence}%\n\n` +
+        `✅ **पिकाची स्थिती:**\n` +
+        `झाडाची पाने हिरवीगार व स्वच्छ आहेत. पानांवर कोणताही बुरशीचा किंवा किडीचा प्रादुर्भाव नाही.\n\n` +
+        `🌱 **पीक निरोगी ठेवण्यासाठी सोपे उपाय:**\n` +
+        `1. संतुलित खतांचा वापर करा, नत्राचा जास्त वापर टाळा.\n` +
+        `2. प्रतिबंधक उपाय म्हणून 15 दिवसांतून एकदा निंबोळी अर्क (5 मिली/लिटर) फवारा.\n\n` +
+        `📞 *मोफत शेतकरी कॉल सेंटर: 1800-180-1551*`;
+    }
+    return `🌾 **Kisan Health Report: ${crop}**\n` +
+      `• **Status:** **100% Healthy Crop**\n` +
+      `• **Model Confidence:** ${confidence}%\n\n` +
+      `✅ **Field Observation:**\n` +
+      `The leaves are vibrant green and completely free from active fungal lesions, leaf spots, or pest webs.\n\n` +
+      `🌱 **Care & Maintenance Tips:**\n` +
+      `1. **Balanced Nutrition:** Avoid excessive urea/nitrogen. Apply organic compost to keep roots strong.\n` +
+      `2. **Watering:** Maintain consistent soil moisture without water-logging.\n` +
+      `3. **Preventive Care:** Spray organic neem oil (5 ml/L water) every 15 days as a natural shield.\n\n` +
+      `📞 *Kisan Call Center Toll-Free: 1800-180-1551*`;
+  }
+
+  // Infected Leaf Response
+  if (lang === 'hi') {
+    return `🌾 **किसान भाई, फसल रोग जांच रिपोर्ट**\n` +
+      `• **फसल का नाम:** ${crop}\n` +
+      `• **पहचानी गई बीमारी:** **${localizedName}**\n` +
+      `• **जांच सटीकता:** ${confidence}% (${confidence > 90 ? 'पक्की पहचान' : 'संभावित'})\n` +
+      `• **खतरे का स्तर:** ${expert?.severity === 'High' ? '⚠️ गंभीर (तुरंत छिड़काव करें)' : 'मध्यम (2-3 दिनों में रोकें)'}\n\n` +
+      `🔍 **खेत में बीमारी के लक्षण:**\n` +
+      `${expert?.symptoms || 'पत्तियों पर धब्बे और किनारों का पीला पड़ना।'}\n\n` +
+      `🌱 **घर का देसी और जैविक उपाय (तुरंत करें):**\n` +
+      `${expert?.organicSteps || 'खराब पत्तियां तोड़कर दूर फेंकें। 1 लीटर पानी में 5 ml नीम का तेल + 1 चम्मच साबुन मिलाकर छिड़कें।'}\n\n` +
+      `💊 **दवा का छिड़काव और सही मात्रा (केमिकल उपचार):**\n` +
+      `${expert?.chemicalSteps || 'साफ (Saaf) या मैनकोजेब 2 ग्राम प्रति लीटर पानी (15 लीटर टंकी में 30 ग्राम) मिलाकर छिड़कें।'}\n\n` +
+      `⚠️ **किसान भाई इन गलतियों से बचें:**\n` +
+      `• पत्तियों के ऊपर पानी न डालें; हमेशा **जड़ों में पानी दें**।\n` +
+      `• दोपहर की तेज धूप में छिड़काव न करें; शाम 4 से 6 बजे के बीच ही छिड़कें।\n\n` +
+      `📞 **मुफ्त सरकारी किसान सलाह:** डायल करें **1800-180-1551** (टोल-फ्री किसान कॉल सेंटर)।`;
+  }
+
+  if (lang === 'pa') {
+    return `🌾 **ਕਿਸਾਨ ਵੀਰੋ, ਫ਼ਸਲ ਜਾਂਚ ਰਿਪੋਰਟ**\n` +
+      `• **ਫ਼ਸਲ:** ${crop}\n` +
+      `• **ਬਿਮਾਰੀ:** **${localizedName}**\n` +
+      `• **ਜਾਂਚ:** ${confidence}%\n` +
+      `• **ਖ਼ਤਰਾ:** ${expert?.severity === 'High' ? '⚠️ ਜ਼ਿਆਦਾ (ਤੁਰੰਤ ਸਪਰੇਅ ਕਰੋ)' : 'ਦਰਮਿਆਨਾ'}\n\n` +
+      `🔍 **ਖੇਤ ਵਿੱਚ ਲੱਛਣ:**\n` +
+      `${expert?.symptoms || 'ਪੱਤਿਆਂ ਤੇ ਧੱਬੇ ਅਤੇ ਪੀਲਾਪਣ।'}\n\n` +
+      `🌱 **ਦੇਸੀ ਅਤੇ ਜੈਵਿਕ ਹੱਲ:**\n` +
+      `${expert?.organicSteps || 'ਨਿੰਮ ਦਾ ਤੇਲ 5 ਮਿ.ਲੀ. ਪ੍ਰਤੀ ਲੀਟਰ ਪਾਣੀ ਵਿੱਚ ਮਿਲਾ ਕੇ ਛਿੜਕੋ।'}\n\n` +
+      `💊 **ਦਵਾਈ ਅਤੇ ਸਹੀ ਮਾਤਰਾ:**\n` +
+      `${expert?.chemicalSteps || 'ਮੈਨਕੋਜ਼ੈਬ 2 ਗ੍ਰਾਮ ਪ੍ਰਤੀ ਲੀਟਰ ਪਾਣੀ (15 ਲੀਟਰ ਢੋਲੀ ਵਿੱਚ 30 ਗ੍ਰਾਮ)।'}\n\n` +
+      `⚠️ **ਸਾਵਧਾਨੀ:** ਪੱਤਿਆਂ ਉੱਤੇ ਪਾਣੀ ਨਾ ਸੁੱਟੋ, ਸ਼ਾਮ ਵੇਲੇ ਸਪਰੇਅ ਕਰੋ।\n\n` +
+      `📞 **ਟੋਲ-ਫ਼੍ਰੀ ਕਿਸਾਨ ਹੈਲਪਲਾਈਨ:** **1800-180-1551**`;
+  }
+
+  if (lang === 'mr') {
+    return `🌾 **शेतकरी मित्र, पीक रोग अहवाल**\n` +
+      `• **पीक:** ${crop}\n` +
+      `• **आढळलेला रोग:** **${localizedName}**\n` +
+      `• **अचूकता:** ${confidence}%\n` +
+      `• **धोका पातळी:** ${expert?.severity === 'High' ? '⚠️ जास्त (लगेच फवारणी करा)' : 'मध्यम'}\n\n` +
+      `🔍 **लक्षणे:**\n` +
+      `${expert?.symptoms || 'पानांवर डाग आणि पिवळेपणा.'}\n\n` +
+      `🌱 **सेंद्रिय / घरगुती उपाय:**\n` +
+      `${expert?.organicSteps || '5 मिली निंबोळी अर्क प्रति लिटर पाण्यात मिसळून फवारा.'}\n\n` +
+      `💊 **औषध आणि फवारणीचे प्रमाण:**\n` +
+      `${expert?.chemicalSteps || 'मॅनकोझेब किंवा साफ 2 ग्रॅम प्रति लिटर पाणी (15 लिटर पंपात 30 ग्रॅम).'}\n\n` +
+      `⚠️ **महत्त्वाची काळजी:** झाडाच्या मुळाशी पाणी द्या, उन्हात फवारणी करू नका.\n\n` +
+      `📞 **मोफत शेतकरी हेल्पलाइन:** **1800-180-1551**`;
+  }
+
+  // English (Default)
+  return `🌾 **Kisan Health Report: ${crop}**\n` +
+    `• **Disease Detected:** **${localizedName}**\n` +
+    `• **Model Confidence:** ${confidence}%\n` +
+    `• **Risk Level:** ${expert?.severity === 'High' ? '⚠️ High Risk (Treat within 24-48 hours)' : 'Medium (Treat promptly)'}\n\n` +
+    `🔍 **Simple Signs to Spot in the Field:**\n` +
+    `${expert?.symptoms || 'Leaf spots with yellowing margins.'}\n\n` +
+    `🌱 **Simple Desi / Organic Solution:**\n` +
+    `${expert?.organicSteps || 'Prune infected lower leaves and spray 5 ml Neem Oil (1500 ppm) per liter of water.'}\n\n` +
+    `💊 **Medicine Spray & Exact Dosage:**\n` +
+    `${expert?.chemicalSteps || 'Spray Mancozeb 75% WP @ 2 grams per Liter of water (approx 30g in a 15-liter spray tank).'}\n\n` +
+    `⚠️ **Important Kisan Precautions:**\n` +
+    `• Water at the plant base/roots; **never splash water directly over wet leaves**.\n` +
+    `• Spray during late afternoon (4 PM – 6 PM) when the sun is mild.\n\n` +
+    `📞 **Free Govt Farmer Help:** Call **1800-180-1551** (Toll-Free Kisan Call Center).`;
+};
+
 export const queryExpertSystem = (queryText: string, cropFilter?: string, lang: string = 'en'): ExpertSystemResult => {
   const text = queryText.toLowerCase();
 
@@ -381,13 +579,7 @@ export const queryExpertSystem = (queryText: string, cropFilter?: string, lang: 
         title: item.condition,
         crop: item.crop,
         severity: item.severity,
-        content: `**Diagnosed:** ${item.condition} (${item.crop})\n` +
-          `**Severity:** ${item.severity}\n\n` +
-          `🔍 **Symptoms:** ${item.symptoms}\n\n` +
-          `🌱 **Organic & Natural Treatment:**\n${item.organicSteps}\n\n` +
-          `🧪 **Chemical Treatment & Dosage:**\n${item.chemicalSteps}\n\n` +
-          `🛡️ **Prevention & Cultural Practices:**\n${item.prevention}\n\n` +
-          `📞 *For emergency field advice, call Kisan Call Center: 1800-180-1551 (Toll-Free)*`
+        content: formatFarmerFriendlyDiagnosis(key, item.crop, item.condition, 95.0, lang)
       };
     }
   }
