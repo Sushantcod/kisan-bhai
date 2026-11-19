@@ -44,28 +44,41 @@ export class GeminiService {
     return `The user's preferred language is ${maps[lang] || 'English'}. Please respond in that language.`;
   }
 
-  // Check if local plant-disease-research model server is running (http://localhost:8000)
+  // Check if local plant-disease-research model server is running (http://127.0.0.1:8000 or http://localhost:8000)
   async queryLocalModel(imageBase64: string): Promise<any | null> {
     const config = getAIConfig();
-    const endpoint = (config.modelApiUrl || 'http://localhost:8000').replace(/\/$/, '') + '/predict';
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2000); // 2s quick timeout
+    const candidateEndpoints = [
+      (config.modelApiUrl || 'http://127.0.0.1:8000').replace(/\/$/, '') + '/predict',
+      'http://127.0.0.1:8000/predict',
+      'http://localhost:8000/predict'
+    ];
+    const uniqueEndpoints = Array.from(new Set(candidateEndpoints));
 
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: imageBase64 }),
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
+    let payloadImage = imageBase64;
+    if (!payloadImage.startsWith('data:')) {
+      payloadImage = `data:image/jpeg;base64,${payloadImage}`;
+    }
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) return data;
+    for (const endpoint of uniqueEndpoints) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3500); // 3.5s timeout
+
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image: payloadImage }),
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.success) return data;
+        }
+      } catch (err) {
+        // Try next candidate endpoint or fail gracefully
       }
-    } catch (err) {
-      // Local model server is offline or unreachable; fall back gracefully
     }
     return null;
   }
@@ -129,15 +142,35 @@ Provide actionable agronomic solutions, pest and disease remedies, fertilizer do
   }
 
   // Voice speech synthesis via Web Speech API
-  async generateSpeech(text: string, lang: string = 'en') {
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = lang === 'hi' ? 'hi-IN' : lang === 'pa' ? 'pa-IN' : lang === 'mr' ? 'mr-IN' : 'en-IN';
-      utterance.rate = 0.95;
-      window.speechSynthesis.speak(utterance);
-    }
-    return null;
+  async generateSpeech(text: string, lang: string = 'en'): Promise<void> {
+    return new Promise((resolve) => {
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        // Clean markdown tags so speech doesn't pronounce asterisks, hashes, or brackets
+        const cleaned = text
+          .replace(/#{1,6}\s*/g, '')
+          .replace(/\*\*(.*?)\*\*/g, '$1')
+          .replace(/\*(.*?)\*/g, '$1')
+          .replace(/`.*?`/g, '')
+          .replace(/[*_#~•\-]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+
+        if (!cleaned) {
+          resolve();
+          return;
+        }
+
+        const utterance = new SpeechSynthesisUtterance(cleaned);
+        utterance.lang = lang === 'hi' ? 'hi-IN' : lang === 'pa' ? 'pa-IN' : lang === 'mr' ? 'mr-IN' : 'en-IN';
+        utterance.rate = 0.95;
+        utterance.onend = () => resolve();
+        utterance.onerror = () => resolve();
+        window.speechSynthesis.speak(utterance);
+      } else {
+        resolve();
+      }
+    });
   }
 
   // Main Chat Entrypoint with Automatic Offline Expert System Fallback
@@ -146,7 +179,7 @@ Provide actionable agronomic solutions, pest and disease remedies, fertilizer do
     const hasKey = !!config.groqKey.trim();
     const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
 
-    // 1. If leaf image is uploaded, query local plant-disease-research model first
+    // 1. If leaf image/video frame is uploaded, query trained research model first
     let localModelDiagnosis: string | null = null;
     if (imageBase64) {
       const localResult = await this.queryLocalModel(imageBase64);
@@ -166,11 +199,28 @@ Provide actionable agronomic solutions, pest and disease remedies, fertilizer do
             `🛡️ **Prevention:** ${expertInfo.prevention}\n\n` +
             `📞 *Kisan Call Center Helpline: 1800-180-1551 (Toll-Free)*`;
         }
+      } else {
+        // Fallback: If local model server is unreachable, use intelligent plant health diagnosis from our expert knowledge
+        const fallback = await this.analyzeDisease(imageBase64, lang);
+        localModelDiagnosis = `🌿 **Crop Health Diagnosis (Kisan-Bhai Expert System):**\n` +
+          `• **Detected Condition:** ${fallback.diseaseName}\n` +
+          `• **Severity:** ${fallback.severity}\n\n` +
+          `🌱 **Recommended Organic Remedy:**\n${fallback.organicSteps}\n\n` +
+          `🧪 **Chemical Treatment & Dosage:**\n${fallback.chemicalSteps}\n\n` +
+          `📞 *Kisan Call Center Helpline: 1800-180-1551 (Toll-Free)*`;
       }
     }
 
+    const isGenericImagePrompt = !message || 
+      message.trim() === "Analyze this." || 
+      message.trim() === "Please inspect and diagnose this crop photo." ||
+      message.trim() === "Analyze this crop photo or video frame.";
+
     // 2. If Offline or No Groq Key: Auto-switch directly to Expert System
     if (!isOnline || !hasKey) {
+      if (localModelDiagnosis && isGenericImagePrompt) {
+        return localModelDiagnosis;
+      }
       const expertResult = queryExpertSystem(message, undefined, lang);
       const prefix = !isOnline 
         ? `📡 *Network Offline — Auto-switched to Offline Expert System:*\n\n`
@@ -191,7 +241,9 @@ Provide actionable agronomic solutions, pest and disease remedies, fertilizer do
       return (localModelDiagnosis ? localModelDiagnosis + "\n\n---\n\n" : "") + groqAnswer;
     } catch (err: any) {
       console.warn("Groq API error, auto-switching to Expert System:", err);
-      // Auto-switch to Expert System seamlessly on any error!
+      if (localModelDiagnosis && isGenericImagePrompt) {
+        return localModelDiagnosis;
+      }
       const expertResult = queryExpertSystem(message, undefined, lang);
       return (localModelDiagnosis ? localModelDiagnosis + "\n\n---\n\n" : "") +
         `🛡️ *Auto-switched to Offline Expert System (${err.message || 'API Unavailable'}):*\n\n` +

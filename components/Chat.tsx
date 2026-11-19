@@ -1,5 +1,3 @@
-
-import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { 
   Bot, 
   Cloud, 
@@ -26,7 +24,9 @@ import {
   Cpu,
   ShieldCheck,
   Zap,
-  Server
+  Server,
+  FlaskConical,
+  Film
 } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
@@ -38,43 +38,22 @@ import { getTranslation } from '../translations';
 import { useUser } from '../App';
 import { ChatMessage, FarmProfile } from '../types';
 
-// Audio Helpers
-function encode(bytes: Uint8Array) {
-  let binary = '';
-  const len = bytes.byteLength;
-  for (let i = 0; i < len; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
+interface TestSample {
+  name: string;
+  crop: string;
+  file: string;
+  icon: string;
+  badge: string;
 }
 
-function decode(base64: string) {
-  const binaryString = atob(base64);
-  const len = binaryString.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  return bytes;
-}
-
-async function decodeAudioData(
-  data: Uint8Array,
-  ctx: AudioContext,
-  sampleRate: number,
-  numChannels: number,
-): Promise<AudioBuffer> {
-  const dataInt16 = new Int16Array(data.buffer);
-  const frameCount = dataInt16.length / numChannels;
-  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
-  for (let channel = 0; channel < numChannels; channel++) {
-    const channelData = buffer.getChannelData(channel);
-    for (let i = 0; i < frameCount; i++) {
-      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
-    }
-  }
-  return buffer;
-}
+const TEST_SAMPLES: TestSample[] = [
+  { name: 'Tomato Early Blight', crop: 'Tomato', file: 'tomato_early_blight.png', icon: '🍅', badge: '99.5% Conf' },
+  { name: 'Potato Early Blight', crop: 'Potato', file: 'potato_early_blight.png', icon: '🥔', badge: '90.7% Conf' },
+  { name: 'Apple Scab', crop: 'Apple', file: 'apple_scab.png', icon: '🍎', badge: '99.9% Conf' },
+  { name: 'Corn Blight / Rust', crop: 'Corn', file: 'corn_common_rust.png', icon: '🌽', badge: '97.8% Conf' },
+  { name: 'Tomato Late Blight', crop: 'Tomato', file: 'tomato_late_blight.png', icon: '🍅', badge: '100% Conf' },
+  { name: 'Healthy Tomato', crop: 'Tomato', file: 'tomato_healthy.png', icon: '🌿', badge: 'Healthy' }
+];
 
 export const Chat: React.FC = () => {
   const { user } = useUser();
@@ -88,16 +67,35 @@ export const Chat: React.FC = () => {
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
   const [aiConfig, setAiConfig] = useState<AIConfig>(() => getAIConfig());
 
+  // Voice State
+  const [liveTranscript, setLiveTranscript] = useState('');
+  const [liveVoiceStatus, setLiveVoiceStatus] = useState<'idle' | 'listening' | 'thinking' | 'speaking'>('idle');
+  const [isDictating, setIsDictating] = useState(false);
+  const [isProcessingVideo, setIsProcessingVideo] = useState(false);
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
-  
-  // Live Mode Refs
-  const liveSessionRef = useRef<any>(null);
-  const nextStartTimeRef = useRef(0);
-  const liveSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
-  const inputAudioContextRef = useRef<AudioContext | null>(null);
+  const speechRecognitionRef = useRef<any>(null);
+  const dictationRecognitionRef = useRef<any>(null);
+  const isLiveModeActiveRef = useRef(false);
+
+  const getRecognitionLang = () => {
+    switch (user?.language) {
+      case 'hi': return 'hi-IN';
+      case 'pa': return 'pa-IN';
+      case 'mr': return 'mr-IN';
+      default: return 'en-IN';
+    }
+  };
+
+  const getLanguageDisplayName = () => {
+    switch (user?.language) {
+      case 'hi': return 'Hindi (हिन्दी)';
+      case 'pa': return 'Punjabi (ਪੰਜਾਬੀ)';
+      case 'mr': return 'Marathi (मराठी)';
+      default: return 'English';
+    }
+  };
 
   // Check if routed with initial state from Scan Crop Health
   useEffect(() => {
@@ -123,31 +121,37 @@ export const Chat: React.FC = () => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages, isLoading, isLiveMode]);
 
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      isLiveModeActiveRef.current = false;
+      if (speechRecognitionRef.current) {
+        try { speechRecognitionRef.current.abort(); } catch (_) {}
+      }
+      if (dictationRecognitionRef.current) {
+        try { dictationRecognitionRef.current.abort(); } catch (_) {}
+      }
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
+
   const speakText = async (text: string) => {
     if (!text || text.trim().length === 0) return;
 
     if (isSpeaking) {
-      audioSourceRef.current?.stop();
+      if ('speechSynthesis' in window) window.speechSynthesis.cancel();
       setIsSpeaking(false);
       return;
     }
 
     setIsSpeaking(true);
     try {
-      const audioData = await geminiService.generateSpeech(text, user?.language);
-      if (audioData) {
-        if (!audioContextRef.current) audioContextRef.current = new AudioContext({ sampleRate: 24000 });
-        const pcmData = decode(audioData);
-        const buffer = await decodeAudioData(pcmData, audioContextRef.current, 24000, 1);
-        const source = audioContextRef.current.createBufferSource();
-        source.buffer = buffer;
-        source.connect(audioContextRef.current.destination);
-        source.onended = () => setIsSpeaking(false);
-        audioSourceRef.current = source;
-        source.start();
-      }
+      await geminiService.generateSpeech(text, user?.language);
     } catch (e) {
-      console.error(e);
+      console.error('Speech synthesis error:', e);
+    } finally {
       setIsSpeaking(false);
     }
   };
@@ -159,93 +163,259 @@ export const Chat: React.FC = () => {
     }
   };
 
-  const startLiveChat = async () => {
-    try {
-      setIsLiveMode(true);
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      
-      if (!audioContextRef.current) audioContextRef.current = new AudioContext({ sampleRate: 24000 });
-      if (!inputAudioContextRef.current) inputAudioContextRef.current = new AudioContext({ sampleRate: 16000 });
-
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      
-      const sessionPromise = ai.live.connect({
-        model: 'gemini-2.5-flash-native-audio-preview-09-2025',
-        callbacks: {
-          onopen: () => {
-            const source = inputAudioContextRef.current!.createMediaStreamSource(stream);
-            const scriptProcessor = inputAudioContextRef.current!.createScriptProcessor(4096, 1, 1);
-            scriptProcessor.onaudioprocess = (e) => {
-              const inputData = e.inputBuffer.getChannelData(0);
-              const int16 = new Int16Array(inputData.length);
-              for (let i = 0; i < inputData.length; i++) int16[i] = inputData[i] * 32768;
-              const pcmBlob = {
-                data: encode(new Uint8Array(int16.buffer)),
-                mimeType: 'audio/pcm;rate=16000',
-              };
-              sessionPromise.then(session => session.sendRealtimeInput({ media: pcmBlob }));
-            };
-            source.connect(scriptProcessor);
-            scriptProcessor.connect(inputAudioContextRef.current!.destination);
-            liveSessionRef.current = { stream, scriptProcessor };
-          },
-          onmessage: async (message: LiveServerMessage) => {
-            const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
-            if (base64Audio && audioContextRef.current) {
-              nextStartTimeRef.current = Math.max(nextStartTimeRef.current, audioContextRef.current.currentTime);
-              const audioBuffer = await decodeAudioData(decode(base64Audio), audioContextRef.current, 24000, 1);
-              const source = audioContextRef.current.createBufferSource();
-              source.buffer = audioBuffer;
-              source.connect(audioContextRef.current.destination);
-              source.onended = () => liveSourcesRef.current.delete(source);
-              source.start(nextStartTimeRef.current);
-              nextStartTimeRef.current += audioBuffer.duration;
-              liveSourcesRef.current.add(source);
-            }
-          },
-          onerror: (e) => console.error('Live Error:', e),
-          onclose: () => setIsLiveMode(false),
-        },
-        config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: user?.language === 'hi' ? 'Kore' : 'Zephyr' } } },
-          systemInstruction: `You are Kisan-Bhai, the friendly AI Farmer advisor. Talking in ${user?.language}.`,
-        },
-      });
-    } catch (err) {
-      console.error(err);
-      setIsLiveMode(false);
+  // FULL-DUPLEX LIVE CONVERSATIONAL VOICE MODE
+  const startListeningForLive = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("Voice recognition is not supported on this browser. Please use Google Chrome, Safari, or Edge.");
+      stopLiveChat();
+      return;
     }
+
+    try {
+      if (speechRecognitionRef.current) {
+        try { speechRecognitionRef.current.abort(); } catch (_) {}
+      }
+
+      const recognition = new SpeechRecognition();
+      recognition.lang = getRecognitionLang();
+      recognition.interimResults = true;
+      recognition.continuous = false;
+
+      let recognizedSpeech = '';
+
+      recognition.onstart = () => {
+        setLiveVoiceStatus('listening');
+      };
+
+      recognition.onresult = (event: any) => {
+        const transcript = Array.from(event.results)
+          .map((r: any) => r[0].transcript)
+          .join('');
+        recognizedSpeech = transcript;
+        setLiveTranscript(transcript);
+      };
+
+      recognition.onerror = (event: any) => {
+        console.warn('Live Speech recognition error:', event.error);
+        if (event.error === 'not-allowed') {
+          alert('Microphone permission was denied. Please allow microphone access in your browser settings.');
+          stopLiveChat();
+        } else if (isLiveModeActiveRef.current && event.error !== 'aborted') {
+          // Restart after short delay
+          setTimeout(() => {
+            if (isLiveModeActiveRef.current) startListeningForLive();
+          }, 800);
+        }
+      };
+
+      recognition.onend = async () => {
+        if (!isLiveModeActiveRef.current) return;
+        const finalQuery = recognizedSpeech.trim();
+        if (finalQuery.length > 1) {
+          setLiveVoiceStatus('thinking');
+          const response = await handleSend(finalQuery);
+          if (response && isLiveModeActiveRef.current) {
+            setLiveVoiceStatus('speaking');
+            setIsSpeaking(true);
+            await geminiService.generateSpeech(response, user?.language);
+            setIsSpeaking(false);
+            if (isLiveModeActiveRef.current) {
+              setLiveTranscript('');
+              startListeningForLive();
+            }
+          } else if (isLiveModeActiveRef.current) {
+            setLiveTranscript('');
+            startListeningForLive();
+          }
+        } else {
+          // No speech detected; restart listening
+          if (isLiveModeActiveRef.current) {
+            startListeningForLive();
+          }
+        }
+      };
+
+      speechRecognitionRef.current = recognition;
+      recognition.start();
+    } catch (err) {
+      console.error('Error starting live speech recognition:', err);
+      stopLiveChat();
+    }
+  };
+
+  const startLiveChat = () => {
+    setIsLiveMode(true);
+    isLiveModeActiveRef.current = true;
+    setLiveTranscript('');
+    startListeningForLive();
   };
 
   const stopLiveChat = () => {
-    if (liveSessionRef.current) {
-      liveSessionRef.current.stream.getTracks().forEach((t: any) => t.stop());
-      liveSessionRef.current.scriptProcessor.disconnect();
-    }
+    isLiveModeActiveRef.current = false;
     setIsLiveMode(false);
-    nextStartTimeRef.current = 0;
+    setLiveVoiceStatus('idle');
+    setLiveTranscript('');
+    if (speechRecognitionRef.current) {
+      try { speechRecognitionRef.current.abort(); } catch (_) {}
+    }
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    setIsSpeaking(false);
   };
 
-  const handleSend = async (overrideText?: string, overrideImage?: string) => {
-    const messageText = overrideText || input;
-    if ((!messageText.trim() && !selectedImage && !overrideImage) || isLoading) return;
+  // CHAT INPUT DICTATION (SINGLE QUERY)
+  const toggleDictation = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("Speech recognition is not supported on this browser. Please use Chrome or Safari.");
+      return;
+    }
 
-    const userMsg: ChatMessage = { role: 'user', content: messageText || "Analyze this.", image: (overrideImage || selectedImage) || undefined };
+    if (isDictating) {
+      if (dictationRecognitionRef.current) {
+        try { dictationRecognitionRef.current.stop(); } catch (_) {}
+      }
+      setIsDictating(false);
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.lang = getRecognitionLang();
+      recognition.interimResults = true;
+      recognition.continuous = false;
+
+      recognition.onstart = () => setIsDictating(true);
+      recognition.onresult = (event: any) => {
+        const text = Array.from(event.results)
+          .map((r: any) => r[0].transcript)
+          .join('');
+        setInput(text);
+      };
+      recognition.onerror = () => setIsDictating(false);
+      recognition.onend = () => setIsDictating(false);
+
+      dictationRecognitionRef.current = recognition;
+      recognition.start();
+    } catch (err) {
+      console.error(err);
+      setIsDictating(false);
+    }
+  };
+
+  // EXTRACT FRAME FROM VIDEO FILES
+  const extractFrameFromVideo = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const video = document.createElement('video');
+      video.preload = 'metadata';
+      video.src = URL.createObjectURL(file);
+      video.muted = true;
+      video.playsInline = true;
+      video.onloadeddata = () => {
+        video.currentTime = Math.min(1.0, (video.duration || 2) / 2);
+      };
+      video.onseeked = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.min(video.videoWidth || 512, 640);
+        canvas.height = Math.min(video.videoHeight || 512, 640);
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const frameDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+          URL.revokeObjectURL(video.src);
+          resolve(frameDataUrl);
+        } else {
+          URL.revokeObjectURL(video.src);
+          reject(new Error('Canvas context unavailable'));
+        }
+      };
+      video.onerror = () => {
+        URL.revokeObjectURL(video.src);
+        reject(new Error('Failed to load video file'));
+      };
+    });
+  };
+
+  // HANDLE PHOTO OR VIDEO UPLOAD
+  const handleMediaUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.type.startsWith('video/')) {
+      setIsProcessingVideo(true);
+      try {
+        const frameDataUrl = await extractFrameFromVideo(file);
+        setSelectedImage(frameDataUrl);
+      } catch (err) {
+        alert('Could not extract frame from video. Please try uploading a photo instead.');
+      } finally {
+        setIsProcessingVideo(false);
+      }
+    } else {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setSelectedImage(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+    // Reset file input
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  // LOAD SAMPLE LEAF FOR 1-CLICK TESTING
+  const handleTestSample = async (sample: TestSample) => {
+    try {
+      setIsLoading(true);
+      const resp = await fetch(`/sample-leaves/${sample.file}`);
+      const blob = await resp.blob();
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const dataUrl = reader.result as string;
+        setSelectedImage(dataUrl);
+        handleSend(`Please diagnose this ${sample.name} test crop leaf.`, dataUrl);
+      };
+      reader.readAsDataURL(blob);
+    } catch (err) {
+      console.error('Failed to load test sample leaf:', err);
+      setIsLoading(false);
+    }
+  };
+
+  const handleSend = async (overrideText?: string, overrideImage?: string): Promise<string> => {
+    const messageText = overrideText || input;
+    if ((!messageText.trim() && !selectedImage && !overrideImage) || isLoading) return '';
+
+    const defaultPrompt = (overrideImage || selectedImage) 
+      ? "Please inspect and diagnose this crop photo or video frame." 
+      : "Analyze this.";
+
+    const textToSend = messageText.trim() ? messageText : defaultPrompt;
+    const currentImage = overrideImage || selectedImage;
+
+    const userMsg: ChatMessage = { 
+      role: 'user', 
+      content: textToSend, 
+      image: currentImage || undefined 
+    };
+
     setMessages(prev => [...prev, userMsg]);
     setInput('');
-    const currentImage = overrideImage || selectedImage;
     setSelectedImage(null);
     setIsLoading(true);
 
+    let assistantResponse = "";
     try {
-      const response = await geminiService.chat(messages, messageText, currentImage || undefined, user?.language);
-      setMessages(prev => [...prev, { role: 'assistant', content: response }]);
+      assistantResponse = await geminiService.chat(messages, textToSend, currentImage || undefined, user?.language);
+      setMessages(prev => [...prev, { role: 'assistant', content: assistantResponse }]);
     } catch (error) {
-      setMessages(prev => [...prev, { role: 'assistant', content: "I encountered a minor issue. Please try asking again!" }]);
+      assistantResponse = "I encountered a minor issue. Please try asking again!";
+      setMessages(prev => [...prev, { role: 'assistant', content: assistantResponse }]);
     } finally {
       setIsLoading(false);
     }
+    return assistantResponse;
   };
 
   const t = getTranslation(user?.language || 'en');
@@ -265,23 +435,37 @@ export const Chat: React.FC = () => {
           <button 
             onClick={stopLiveChat} 
             className="absolute top-6 right-6 text-white/70 hover:text-white transition-colors p-3 rounded-full hover:bg-white/10"
+            title="Close Voice Session"
           >
             <X className="w-6 h-6" />
           </button>
           
           <div className="relative w-36 h-36 rounded-full bg-gradient-to-tr from-brand-600 to-emerald-400 flex items-center justify-center mb-8 shadow-glow-green">
-            <div className="absolute inset-0 rounded-full border-4 border-brand-400/40 animate-ping" />
-            <Bot className="w-16 h-16 text-white animate-pulse" />
+            <div className={`absolute inset-0 rounded-full border-4 border-brand-400/40 ${liveVoiceStatus === 'listening' ? 'animate-ping' : ''}`} />
+            <Bot className={`w-16 h-16 text-white ${liveVoiceStatus === 'speaking' ? 'animate-bounce' : 'animate-pulse'}`} />
           </div>
 
           <h2 className="font-heading font-extrabold text-2xl text-white mb-2">Talking with Kisan-Bhai</h2>
-          <p className="text-brand-200 text-sm font-medium mb-10 text-center max-w-sm">
-            I am listening to your voice in real time. Speak naturally!
+          <p className="text-brand-200 text-xs sm:text-sm font-medium mb-4 text-center max-w-sm">
+            {liveVoiceStatus === 'listening' && `Listening in ${getLanguageDisplayName()}... Speak naturally!`}
+            {liveVoiceStatus === 'thinking' && "Analyzing your farming question..."}
+            {liveVoiceStatus === 'speaking' && "Speaking advisory aloud..."}
+            {liveVoiceStatus === 'idle' && "Ready for your question."}
           </p>
 
-          <div className="flex items-center gap-1.5 h-10 mb-10">
+          {/* REALTIME RECOGNIZED TRANSCRIPT */}
+          <div className="min-h-16 max-w-md w-full px-4 py-3 bg-white/10 backdrop-blur-md rounded-2xl border border-white/20 mb-6 text-center">
+            <p className="text-white font-medium text-sm sm:text-base italic">
+              {liveTranscript || (liveVoiceStatus === 'listening' ? "Listening for your voice..." : "...")}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-1.5 h-10 mb-8">
             {[...Array(5)].map((_, idx) => (
-              <span key={idx} className="wave-bar w-2 bg-brand-400 rounded-full animate-wave-bar h-full" />
+              <span 
+                key={idx} 
+                className={`wave-bar w-2 bg-brand-400 rounded-full h-full ${liveVoiceStatus === 'listening' ? 'animate-wave-bar' : 'opacity-40'}`} 
+              />
             ))}
           </div>
 
@@ -342,6 +526,7 @@ export const Chat: React.FC = () => {
           <button 
             onClick={startLiveChat} 
             className="flex items-center gap-2 bg-gradient-to-r from-brand-600 to-emerald-600 hover:from-brand-500 hover:to-emerald-500 text-white px-4 py-2.5 rounded-xl font-extrabold text-xs transition-all shadow-md shadow-brand-600/20 active:scale-95"
+            title="Start Full Hands-Free Voice Chat"
           >
             <Waves className="w-4 h-4" /> 
             <span className="hidden sm:inline">Start Live Voice</span>
@@ -350,14 +535,11 @@ export const Chat: React.FC = () => {
         </div>
       </div>
 
-      {/* MESSAGES TRAJECTORY (SEMI-TRANSPARENT MIDDLE AREA) */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 bg-transparent custom-scrollbar">
-        {messages.map((msg, i) => (
-          <div 
-            key={i} 
-            className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-in fade-in slide-in-from-bottom-2 duration-300`}
-          >
-            <div className={`flex gap-3 max-w-[90%] sm:max-w-[80%] ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+      {/* MESSAGES SCROLL AREA */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
+        {messages.map((msg, index) => (
+          <div key={index} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'} animate-in fade-in slide-in-from-bottom-2 duration-300`}>
+            <div className={`flex gap-3 max-w-[90%] sm:max-w-[85%] ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
               <div className={`w-8 h-8 sm:w-9 sm:h-9 rounded-xl shrink-0 flex items-center justify-center shadow-xs ${
                 msg.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-brand-600 text-white'
               }`}>
@@ -401,9 +583,9 @@ export const Chat: React.FC = () => {
           </div>
         ))}
 
-        {/* PROMPT SUGGESTIONS CHIPS (ULTRA-TRANSPARENT GLASS) */}
+        {/* PROMPT SUGGESTIONS CHIPS (WHEN FRESH CHAT) */}
         {messages.length === 1 && !isLoading && (
-          <div className="animate-fade-in-up opacity-0 [animation-delay:200ms] [animation-fill-mode:forwards] space-y-4 pt-6 pb-6">
+          <div className="animate-fade-in-up opacity-0 [animation-delay:200ms] [animation-fill-mode:forwards] space-y-4 pt-4 pb-2">
             <p className="text-[10px] font-extrabold text-slate-500 uppercase tracking-widest text-center">
               {t.tryAsking}
             </p>
@@ -441,10 +623,41 @@ export const Chat: React.FC = () => {
         )}
       </div>
 
+      {/* QUICK TEST SAMPLES BAR (TRAINED PLANT DISEASE DATASET) */}
+      <div className="px-4 py-2 border-t border-white/40 bg-white/30 backdrop-blur-md">
+        <div className="flex items-center justify-between mb-1.5 px-0.5">
+          <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+            <FlaskConical className="w-3.5 h-3.5 text-brand-600" />
+            <span>Test Trained Model with Dataset Leaves:</span>
+          </span>
+          <span className="text-[9px] text-emerald-800 font-extrabold bg-emerald-100/90 border border-emerald-200/80 px-2 py-0.5 rounded-full">
+            MobileNetV2 (38 Classes)
+          </span>
+        </div>
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+          {TEST_SAMPLES.map((sample, idx) => (
+            <button
+              key={idx}
+              type="button"
+              onClick={() => handleTestSample(sample)}
+              disabled={isLoading}
+              className="shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 bg-white/70 hover:bg-white border border-white/90 rounded-xl text-left hover:border-brand-400 hover:shadow-xs transition-all active:scale-95 group disabled:opacity-50"
+              title={`Test ${sample.name} from trained dataset`}
+            >
+              <span className="text-sm">{sample.icon}</span>
+              <div>
+                <div className="text-[11px] font-extrabold text-slate-800 leading-none group-hover:text-brand-700">{sample.name}</div>
+                <div className="text-[9px] font-bold text-emerald-700 mt-0.5">{sample.badge}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* CHAT INPUT AREA */}
-      <div className="p-4 sm:p-5 border-t border-white/50 bg-white/40 backdrop-blur-xl">
+      <div className="p-3 sm:p-4 border-t border-white/50 bg-white/45 backdrop-blur-xl">
         {selectedImage && (
-          <div className="relative inline-block mb-3 animate-in zoom-in duration-200">
+          <div className="relative inline-block mb-2.5 animate-in zoom-in duration-200">
             <img src={selectedImage} alt="Crop Preview" className="h-16 w-16 object-cover rounded-xl border-2 border-brand-500 shadow-md" />
             <button 
               onClick={() => setSelectedImage(null)} 
@@ -455,29 +668,42 @@ export const Chat: React.FC = () => {
           </div>
         )}
 
-        <div className="flex items-center gap-2.5">
+        {isProcessingVideo && (
+          <div className="flex items-center gap-2 mb-2 text-xs font-bold text-brand-700 bg-brand-50 p-2 rounded-xl">
+            <Loader2 className="w-4 h-4 animate-spin text-brand-600" />
+            <span>Extracting clear frame from crop video...</span>
+          </div>
+        )}
+
+        <div className="flex items-center gap-2 sm:gap-2.5">
           <input 
             type="file" 
             ref={fileInputRef} 
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) {
-                const reader = new FileReader();
-                reader.onloadend = () => setSelectedImage(reader.result as string);
-                reader.readAsDataURL(file);
-              }
-            }} 
-            accept="image/*" 
+            onChange={handleMediaUpload} 
+            accept="image/*,video/*" 
             className="hidden" 
           />
           
           <button 
             type="button"
             onClick={() => fileInputRef.current?.click()} 
-            className="p-3 text-slate-500 hover:text-brand-600 bg-white/60 hover:bg-white backdrop-blur-md rounded-xl transition-all border border-white/80"
-            title="Upload Crop Photo"
+            className="p-3 text-slate-600 hover:text-brand-600 bg-white/70 hover:bg-white backdrop-blur-md rounded-xl transition-all border border-white/80 shadow-xs"
+            title="Upload Crop Photo or Video"
           >
             <ImageIcon className="w-5 h-5" />
+          </button>
+
+          <button 
+            type="button"
+            onClick={toggleDictation}
+            className={`p-3 rounded-xl transition-all border shadow-xs ${
+              isDictating 
+                ? 'bg-rose-500 text-white border-rose-600 animate-pulse' 
+                : 'text-slate-600 hover:text-brand-600 bg-white/70 hover:bg-white backdrop-blur-md border-white/80'
+            }`}
+            title={isDictating ? "Listening... Click to stop" : "Voice dictation (Speak in your language)"}
+          >
+            {isDictating ? <MicOff className="w-5 h-5 text-white" /> : <Mic className="w-5 h-5" />}
           </button>
 
           <div className="flex-1">
@@ -485,8 +711,8 @@ export const Chat: React.FC = () => {
               value={input} 
               onChange={(e) => setInput(e.target.value)} 
               onKeyDown={(e) => e.key === 'Enter' && handleSend()} 
-              placeholder={t.askAnything} 
-              className="w-full bg-white/60 backdrop-blur-md border border-white/80 focus:border-brand-500 focus:bg-white/90 focus:ring-2 focus:ring-brand-500/20 rounded-xl px-4 py-3 text-xs sm:text-sm text-slate-900 placeholder-slate-500 font-medium outline-none transition-all" 
+              placeholder={isDictating ? "Listening to your voice..." : t.askAnything} 
+              className="w-full bg-white/70 backdrop-blur-md border border-white/80 focus:border-brand-500 focus:bg-white/95 focus:ring-2 focus:ring-brand-500/20 rounded-xl px-4 py-3 text-xs sm:text-sm text-slate-900 placeholder-slate-500 font-medium outline-none transition-all shadow-xs" 
             />
           </div>
 
@@ -495,6 +721,7 @@ export const Chat: React.FC = () => {
             onClick={() => handleSend()} 
             disabled={isLoading || (!input.trim() && !selectedImage)} 
             className="p-3 bg-gradient-to-r from-brand-600 to-emerald-600 text-white rounded-xl shadow-md shadow-brand-600/20 hover:from-brand-500 hover:to-emerald-500 disabled:opacity-40 transition-all active:scale-95"
+            title="Send Message"
           >
             <Send className="w-5 h-5" />
           </button>
@@ -512,4 +739,3 @@ export const Chat: React.FC = () => {
     </div>
   );
 };
-

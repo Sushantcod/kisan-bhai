@@ -86,9 +86,7 @@ export const Dashboard: React.FC = () => {
   const handleScan = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file && user) {
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        const base64 = reader.result as string;
+      const processBase64 = async (base64: string) => {
         setIsScanning(true);
         try {
           const result = await geminiService.analyzeDisease(base64, user.language);
@@ -100,7 +98,39 @@ export const Dashboard: React.FC = () => {
           setIsScanning(false);
         }
       };
-      reader.readAsDataURL(file);
+
+      if (file.type.startsWith('video/')) {
+        const video = document.createElement('video');
+        video.preload = 'metadata';
+        video.src = URL.createObjectURL(file);
+        video.muted = true;
+        video.playsInline = true;
+        video.onloadeddata = () => {
+          video.currentTime = Math.min(1.0, (video.duration || 2) / 2);
+        };
+        video.onseeked = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.min(video.videoWidth || 512, 640);
+          canvas.height = Math.min(video.videoHeight || 512, 640);
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const frameDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+            processBase64(frameDataUrl);
+          }
+          URL.revokeObjectURL(video.src);
+        };
+        video.onerror = () => {
+          URL.revokeObjectURL(video.src);
+          alert('Could not read video file. Please try uploading a photo instead.');
+        };
+      } else {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          processBase64(reader.result as string);
+        };
+        reader.readAsDataURL(file);
+      }
     }
   };
 
@@ -218,7 +248,7 @@ export const Dashboard: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-3">
-          <input type="file" ref={fileInputRef} onChange={handleScan} accept="image/*" className="hidden" />
+          <input type="file" ref={fileInputRef} onChange={handleScan} accept="image/*,video/*" className="hidden" />
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
