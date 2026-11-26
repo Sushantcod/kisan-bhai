@@ -1,6 +1,6 @@
 # 🌾 Kisan-Bhai (RuralAssist AI)
 
-<p align="center">
+<p  align="center">
   <img src="public/wheat_field.jpg" alt="Kisan-Bhai Banner" width="100%" style="border-radius: 16px; object-fit: cover; max-height: 350px;" />
 </p>
 
