@@ -37,7 +37,7 @@
 - [License](#-license)
 
 ---
-
+#something
 ## 🌟 Overview
 
 **Kisan-Bhai (RuralAssist AI)** is a state-of-the-art agricultural web application designed to bridge the digital gap for Indian farmers, buyers, and rural entrepreneurs. Built with a high-performance **React + TypeScript + TailwindCSS** stack and powered by **Google Gemini 2.5 Flash**, Kisan-Bhai provides hyper-local agricultural intelligence, vision-based crop disease diagnosis, real-time voice advisory, and a zero-commission farm-to-farm marketplace.
